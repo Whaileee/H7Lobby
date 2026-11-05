@@ -4,6 +4,9 @@ The online game list for **Might & Magic Heroes VII** multiplayer, now that Ubis
 down. It runs on Cloudflare Workers (free plan) and is used by the online support built into
 [H7ModEngine](https://github.com/Whaileee/H7ModEngine).
 
+The public lobby: **https://h7-lobby.whaileee.workers.dev** (the engine's default, `[Online] LobbyUrl` in
+`H7ModEngine.ini`). It deploys from `main` through Cloudflare Workers Builds.
+
 The lobby is only a noticeboard. The host's own game is the server, and players connect to it directly, the same
 way the game's LAN mode works. Game traffic never passes through Cloudflare:
 
