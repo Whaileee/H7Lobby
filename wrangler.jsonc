@@ -11,7 +11,9 @@
   // SQLite-backed Durable Objects are the kind available on the Workers free plan.
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Lobby"] }],
   "vars": {
-    // "on": test that a registering host accepts TCP connections on its game port (the game's mesh beacon).
-    "PROBE": "on"
+    // "on": test that a registering host accepts TCP connections on its game port. Off: measured in game
+    // (2026-11-05) the host listens on UDP 27015 only (no TCP listener in LAN mode), and Workers can't send UDP,
+    // so the probe would report every host as unreachable. reachable is null while it is off.
+    "PROBE": "off"
   }
 }

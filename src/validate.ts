@@ -7,6 +7,15 @@ export interface ModInfo {
   version: string;
 }
 
+// A group of community content packages (from the host's CookedPC folder); version is a content hash.
+export interface ContentPack {
+  name: string;
+  version: string;
+  files: number;
+}
+
+export type Edition = "base" | "modded";
+
 export interface Registration {
   name: string;
   type: GameType;
@@ -19,6 +28,9 @@ export interface Registration {
   game_version: string;
   engine_version: string;
   mods: ModInfo[];
+  edition: Edition;
+  content: ContentPack[];
+  content_fingerprint: string;
   settings: Record<string, string | number | boolean>;
   ipv4?: string;
 }
@@ -88,6 +100,24 @@ export function parseRegistration(body: unknown): Registration {
     }
   }
 
+  const content: ContentPack[] = [];
+  if (b.content !== undefined) {
+    if (!Array.isArray(b.content)) fail("content must be an array");
+    const list = b.content as unknown[];
+    if (list.length > 128) fail("at most 128 content packs");
+    for (const c of list) {
+      if (typeof c !== "object" || c === null) fail("content entries must be objects");
+      const cc = c as Record<string, unknown>;
+      content.push({
+        name: str(cc.name, "content[].name", 64),
+        version: str(cc.version, "content[].version", 16),
+        files: int(cc.files, "content[].files", 0, 100_000, 0),
+      });
+    }
+  }
+  const edition = b.edition === undefined ? (content.length ? "modded" : "base") : str(b.edition, "edition", 16);
+  if (edition !== "base" && edition !== "modded") fail('edition must be "base" or "modded"');
+
   const settings: Record<string, string | number | boolean> = {};
   if (b.settings !== undefined) {
     if (typeof b.settings !== "object" || b.settings === null || Array.isArray(b.settings)) fail("settings must be an object");
@@ -95,7 +125,7 @@ export function parseRegistration(body: unknown): Registration {
     if (entries.length > 32) fail("at most 32 settings");
     for (const [k, v] of entries) {
       str(k, "settings key", 32);
-      if (typeof v === "string") settings[k] = str(v, `settings.${k}`, 128, false);
+      if (typeof v === "string") settings[k] = str(v, `settings.${k}`, 2048, false); // the random map generator string can be long
       else if (typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v))) settings[k] = v;
       else fail(`settings.${k} must be a string, number or boolean`);
     }
@@ -119,6 +149,9 @@ export function parseRegistration(body: unknown): Registration {
     game_version: str(b.game_version, "game_version", 32),
     engine_version: str(b.engine_version, "engine_version", 32),
     mods,
+    edition: edition as Edition,
+    content,
+    content_fingerprint: str(b.content_fingerprint, "content_fingerprint", 32, false),
     settings,
     ipv4,
   };
