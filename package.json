@@ -1,0 +1,25 @@
+{
+  "name": "h7-lobby",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Online game lobby for Might & Magic Heroes VII multiplayer (H7ModEngine), on Cloudflare Workers",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.6.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.158.0"
+  },
+  "allowScripts": {
+    "workerd@1.20261104.1": true,
+    "esbuild@0.28.2": true
+  }
+}
