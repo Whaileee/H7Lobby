@@ -1,4 +1,7 @@
 // Input validation for game registrations and heartbeats. Everything a host sends is untrusted.
+import { isIPv4 } from "./ipaddr";
+
+export { isIPv4, isPrivateIPv4 } from "./ipaddr";
 
 export type GameType = "skirmish" | "duel";
 
@@ -32,6 +35,7 @@ export interface Registration {
   content: ContentPack[];
   content_fingerprint: string;
   settings: Record<string, string | number | boolean>;
+  token: string; // the host's secret (64 hex chars): Bearer auth and the key the host proves itself with
   ipv4?: string;
 }
 
@@ -73,18 +77,6 @@ function listOf(v: unknown, field: string): unknown[] {
   if (Array.isArray(v)) return v;
   if (typeof v === "object" && v !== null && Object.keys(v).length === 0) return [];
   return fail(`${field} must be an array`);
-}
-
-export function isIPv4(s: string): boolean {
-  const parts = s.split(".");
-  return parts.length === 4 && parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255 && String(Number(p)) === p);
-}
-
-// Addresses another player on the internet can never reach.
-export function isPrivateIPv4(s: string): boolean {
-  const [a, b] = s.split(".").map(Number);
-  return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
 }
 
 export function parseRegistration(body: unknown): Registration {
@@ -136,6 +128,9 @@ export function parseRegistration(body: unknown): Registration {
     }
   }
 
+  const token = str(b.token, "token", 64);
+  if (!/^[0-9a-f]{64}$/.test(token)) fail("token must be 64 lowercase hex characters (32 random bytes)");
+
   let ipv4: string | undefined;
   if (b.ipv4 !== undefined) {
     ipv4 = str(b.ipv4, "ipv4", 15);
@@ -158,6 +153,7 @@ export function parseRegistration(body: unknown): Registration {
     content,
     content_fingerprint: str(b.content_fingerprint, "content_fingerprint", 32, false),
     settings,
+    token,
     ipv4,
   };
 }

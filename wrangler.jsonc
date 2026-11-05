@@ -11,9 +11,11 @@
   // SQLite-backed Durable Objects are the kind available on the Workers free plan.
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Lobby"] }],
   "vars": {
-    // "on": test that a registering host accepts TCP connections on its game port. Off: measured in game
-    // (2026-11-05) the host listens on UDP 27015 only (no TCP listener in LAN mode), and Workers can't send UDP,
-    // so the probe would report every host as unreachable. reachable is null while it is off.
-    "PROBE": "off"
-  }
+    // "on": a host is listed only after it answers the lobby's TCP challenge on its game port (src/verify.ts).
+    // Tests run with "off". Local `wrangler dev` testing against 127.0.0.1: add `--var DEV_ALLOW_PRIVATE:1`.
+    "VERIFY": "on"
+  },
+  // Edge rate limit on POST /v1/games per caller (IPv6: per /48), before the Durable Object sees the request.
+  // The Durable Object keeps its own, exact limits too (src/lobby.ts).
+  "ratelimits": [{ "name": "REGISTER_LIMIT", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }]
 }
