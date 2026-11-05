@@ -13,7 +13,8 @@ way the game's LAN mode works. Game traffic never passes through Cloudflare:
 ```
  Host's game ──register / heartbeat (HTTPS)──▶  H7Lobby  ◀──list games (HTTPS)── Other players
      ▲                                                                                  │
-     └────────────────── game traffic: UDP + TCP 27015, direct ─────────────────────────┘
+     └────────────────── game traffic: UDP 27015, direct ───────────────────────────────┘
+     (the lobby checks the host on TCP 27015 before listing it)
 ```
 
 ## API
@@ -25,10 +26,12 @@ All bodies are JSON. Errors are `{"error": "message"}` with a 4xx status.
 | `GET /` | `{service, api}` |
 | `GET /v1/games?type=duel\|skirmish` | `{api, games: [...], heartbeat_s, ttl_s}`: open public games, newest first (private and started games are left out) |
 | `GET /v1/games/:id` | One game, including private ones: the id works as an invite code |
-| `POST /v1/games` | Register a game (below). `201 {id, token, ip, port, reachable, heartbeat_s, ttl_s}` |
-| `POST /v1/games/:id/heartbeat` | `Authorization: Bearer <token>`. Optional body `{players, started}`. Send every `heartbeat_s` (15) seconds; a game without one for `ttl_s` (60) seconds is removed |
-| `POST /v1/games/:id/probe` | `Authorization: Bearer <token>`. Repeat the reachability test (e.g. after the port was opened): `{reachable}` |
-| `DELETE /v1/games/:id` | `Authorization: Bearer <token>`. `204` |
+| `POST /v1/games` | Register a game (below). The lobby first [verifies the host](#host-verification). `201 {id, ip, port, verified, heartbeat_s, ttl_s}`; `403` when verification failed (`{error, ip, port}`) or the address is banned; `429`/`503` at a limit |
+| `POST /v1/games/:id/heartbeat` | `Authorization: Bearer <token>`, from the address the game was registered from (or the listed IPv4). Optional body `{players, started}`. Send every `heartbeat_s` (15) seconds; a game without one for `ttl_s` (60) seconds is removed. `403` from another address: register again |
+| `DELETE /v1/games/:id` | `Authorization: Bearer <token>` (same address rule), or the admin token. `204` |
+| `GET /v1/admin/bans` | Admin token. `{bans: [{cidr, reason, until?, created, active}]}` |
+| `PUT /v1/admin/bans` | Admin token. `{cidr, reason?, until?, force?}`: ban an address or range (IPv4 or IPv6, e.g. `198.51.100.0/24`); its games are removed at once. Ranges wider than /16 (IPv4) or /32 (IPv6) need `"force": true`. `until` is ms since the epoch |
+| `DELETE /v1/admin/bans?cidr=` | Admin token. Lift a ban. `204` |
 
 Registration body:
 
@@ -47,16 +50,51 @@ Registration body:
 | `edition` | Optional `"base"` or `"modded"` (default: `"modded"` when `content` is non-empty) |
 | `content` | Optional `[{name, version, files}]`, up to 128: the community content packs in the host's `CookedPC` folder; `version` is a content hash (up to 16 characters), so clients can name each pack that differs |
 | `content_fingerprint` | Optional hash over all of `content` (up to 32 characters) |
+| `token` | 64 lowercase hex characters (32 random bytes) the host generates: its Bearer token for this game and the key it [proves itself](#host-verification) with. Never shown to anyone else |
 | `settings` | Optional flat object of strings (up to 2048 characters)/numbers/booleans (turn type, random map string, ...), up to 32 keys |
-| `ipv4` | Optional; only used when the host's request reached Cloudflare over IPv6 (the game listens on IPv4). The host's mod gets it from the router through UPnP |
+| `ipv4` | Optional; only used when the host's request reached Cloudflare over IPv6 (the game listens on IPv4). The host's mod gets it from the router through UPnP. Verified like any other address |
 
-The host's address is the IP its request came from, as Cloudflare saw it (private addresses are refused); hosts
-can't register someone else's address. `reachable` is `null`: the host's game listens on UDP 27015 only, which a
-Worker can't test (the TCP probe in `src/lobby.ts` stays available behind `PROBE = "on"`). Hosts open the port
-with UPnP or by hand.
+The host's address is the IP its request came from, as Cloudflare saw it (private addresses are refused).
 
-Limits: 10 registrations per minute and 3 games per address (a 4th replaces the address's oldest game, so a
-crashed host can come back), 16 KB per request.
+### Host verification
+
+Players' games connect straight to a listed address, so the lobby lists only hosts that prove they are at the
+address they claim: before a game is stored, the lobby opens a TCP connection to `ip:port` (the game itself uses
+UDP on that port, so TCP is free for this) and asks the host to answer a challenge only the holder of the game's
+`token` can answer. A game that fails is not listed. This stops fake listings that point players at someone else's
+PC, and makes flooding the list cost one public address with an open port per 3 games.
+
+All ASCII; HMAC keys are the bytes of the hex strings:
+
+| | |
+|---|---|
+| `ckey` | `hex(HMAC-SHA256(key = token, msg = "H7LOBBY challenge key"))`: what the host's responder holds (never the token itself) |
+| lobby → host | `"H7LOBBY 1 " + nonce + "\n"`, nonce = 32 lowercase hex characters (43 bytes) |
+| host → lobby | `hex(HMAC-SHA256(key = ckey, msg = nonce)) + "\n"` (65 bytes), then close |
+
+Timeout 3 s. The 403 names the reason (`connection refused`, `timeout`, `wrong answer`, `closed early`) only
+when the listed address is the caller's own. Test vector: token `0011…eeff` (`00112233445566778899aabbccddeeff`
+twice) gives ckey `00f01b98…edc3cc`; nonce `0123456789abcdef0123456789abcdef` gives the reply
+`5794bf2e5e14ea5f4f7eeca473024143a18e94fa4dd32d5274dd6219a3720350` (`test/verify.test.ts`).
+`node test/responder.mjs` is a reference host side. Hosts therefore need **UDP and TCP** on their game port
+forwarded (H7ModEngine maps both through UPnP).
+
+### Limits
+
+Per caller (IPv6: per /48) 10 registrations a minute, failed ones included (also enforced at the edge by a
+Workers rate-limit binding); 5 verification attempts a minute per listed address; 3 games per address (a 4th
+replaces the address's oldest game, so a crashed host can come back); 8 games per IPv4 /24; 300 games in all;
+16 KB per request.
+
+### Admin
+
+Set a secret with `npx wrangler secret put ADMIN_TOKEN` (or in the dashboard: Worker → Settings → Variables and
+Secrets). Without it the admin routes answer 404. Example:
+
+```bash
+curl -X PUT https://h7-lobby.whaileee.workers.dev/v1/admin/bans -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" -d '{"cidr": "198.51.100.0/24", "reason": "fake games"}'
+```
 
 ## Deploying your own
 
@@ -73,18 +111,24 @@ Deploying from a terminal instead: `npx wrangler login`, then `npm run deploy`.
 
 ```bash
 npm ci
-npm test            # Vitest inside the Workers runtime (Miniflare); TCP probing is off in tests
+npm test            # Vitest inside the Workers runtime (Miniflare); host verification is off in tests
 npm run typecheck
 npm run dev         # local server on http://localhost:8787
+# End to end with real TCP challenges against a local host:
+npx wrangler dev --var DEV_ALLOW_PRIVATE:1
+node test/responder.mjs register http://127.0.0.1:8787 27990
 npm run types       # after changing wrangler.jsonc: regenerate worker-configuration.d.ts (CI checks it)
 ```
 
 | Path | |
 |---|---|
-| `src/index.ts` | Entry Worker: `/`, forwards `/v1/*` with the caller's IP to the Durable Object |
-| `src/lobby.ts` | `Lobby` Durable Object: game list, tokens, expiry, limits, TCP probe |
+| `src/index.ts` | Entry Worker: `/`, registration with host verification, forwards the other `/v1/*` routes with the caller's IP to the Durable Object |
+| `src/lobby.ts` | `Lobby` Durable Object: game list, tokens, expiry, limits, bans |
+| `src/verify.ts` | Host verification (the TCP challenge) |
+| `src/ipaddr.ts` | Address parsing, rate-limit keys, CIDR matching |
 | `src/validate.ts` | Validation of registration and heartbeat bodies |
-| `test/lobby.test.ts` | API tests |
+| `test/lobby.test.ts`, `test/verify.test.ts` | API and protocol tests |
+| `test/responder.mjs` | Reference host side of the challenge (end-to-end tests) |
 
 ## License
 

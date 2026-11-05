@@ -5,8 +5,8 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
-      // No outbound TCP probes in tests (and private addresses are allowed).
-      miniflare: { bindings: { PROBE: "off" } },
+      // No TCP challenge in tests (src/verify.ts is tested on its own and end to end with test/responder.mjs).
+      miniflare: { bindings: { VERIFY: "off", ADMIN_TOKEN: "test-admin-token" } },
     }),
   ],
 });
