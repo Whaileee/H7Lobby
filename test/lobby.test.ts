@@ -78,6 +78,14 @@ describe("lobby", () => {
     expect((await call("/v1/games", { method: "POST", json: game({ ipv4: "192.168.1.5" }), ip: "2001:db8::2" })).status).toBe(400);
   });
 
+  it("accepts empty lists sent as {} (Lua clients)", async () => {
+    const g = await register({ mods: {}, content: {} }, "203.0.113.40");
+    const listed = (await list()).find((x) => x.id === g.id)!;
+    expect(listed).toMatchObject({ mods: [], content: [], edition: "base" });
+    const res = await call("/v1/games", { method: "POST", json: game({ mods: { a: 1 } }), ip: "203.0.113.41" });
+    expect(res.status).toBe(400);
+  });
+
   it("ignores a client-supplied X-Client-IP header", async () => {
     const res = await call("/v1/games", { method: "POST", json: game(), headers: { "X-Client-IP": "198.51.100.1" } });
     expect(((await res.json()) as { ip: string }).ip).toBe("203.0.113.7");

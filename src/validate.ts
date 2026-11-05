@@ -68,6 +68,13 @@ function int(v: unknown, field: string, min: number, max: number, fallback?: num
   return v;
 }
 
+// An array, or an empty object: Lua clients (H7ModEngine 0.1.1's OnlineLobby) send an empty list as {}.
+function listOf(v: unknown, field: string): unknown[] {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "object" && v !== null && Object.keys(v).length === 0) return [];
+  return fail(`${field} must be an array`);
+}
+
 export function isIPv4(s: string): boolean {
   const parts = s.split(".");
   return parts.length === 4 && parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255 && String(Number(p)) === p);
@@ -90,8 +97,7 @@ export function parseRegistration(body: unknown): Registration {
 
   const mods: ModInfo[] = [];
   if (b.mods !== undefined) {
-    if (!Array.isArray(b.mods)) fail("mods must be an array");
-    const list = b.mods as unknown[];
+    const list = listOf(b.mods, "mods");
     if (list.length > 64) fail("at most 64 mods");
     for (const m of list) {
       if (typeof m !== "object" || m === null) fail("mods entries must be objects");
@@ -102,8 +108,7 @@ export function parseRegistration(body: unknown): Registration {
 
   const content: ContentPack[] = [];
   if (b.content !== undefined) {
-    if (!Array.isArray(b.content)) fail("content must be an array");
-    const list = b.content as unknown[];
+    const list = listOf(b.content, "content");
     if (list.length > 128) fail("at most 128 content packs");
     for (const c of list) {
       if (typeof c !== "object" || c === null) fail("content entries must be objects");
