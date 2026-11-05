@@ -61,6 +61,23 @@ describe("lobby", () => {
     expect(listed).not.toHaveProperty("token");
   });
 
+  it("stores edition and content packs", async () => {
+    const content = [{ name: "mods/Conflux", version: "1a2b3c4d", files: 11 }, { name: "Data", version: "4ec8aea0", files: 13 }];
+    const g = await register({ content, content_fingerprint: "1d73ef9dedc201c0" }, "203.0.113.30");
+    const listed = (await list()).find((x) => x.id === g.id)!;
+    expect(listed).toMatchObject({ edition: "modded", content, content_fingerprint: "1d73ef9dedc201c0" });
+    const base = await register({}, "203.0.113.31");
+    expect((await list()).find((x) => x.id === base.id)).toMatchObject({ edition: "base", content: [] });
+    expect(((await (await call("/v1/games")).json()) as { api: number }).api).toBe(1);
+  });
+
+  it("rejects private addresses", async () => {
+    for (const ip of ["192.168.1.5", "10.0.0.1", "127.0.0.1"]) {
+      expect((await call("/v1/games", { method: "POST", json: game(), ip })).status).toBe(400);
+    }
+    expect((await call("/v1/games", { method: "POST", json: game({ ipv4: "192.168.1.5" }), ip: "2001:db8::2" })).status).toBe(400);
+  });
+
   it("ignores a client-supplied X-Client-IP header", async () => {
     const res = await call("/v1/games", { method: "POST", json: game(), headers: { "X-Client-IP": "198.51.100.1" } });
     expect(((await res.json()) as { ip: string }).ip).toBe("203.0.113.7");
@@ -142,6 +159,8 @@ describe("lobby", () => {
     [{ settings: { a: { nested: true } } }, "settings"],
     [{ private: "yes" }, "private"],
     [{ ipv4: "999.1.1.1" }, "ipv4"],
+    [{ edition: "7.5" }, "edition"],
+    [{ content: [{ name: "x", version: "y".repeat(17) }] }, "content"],
   ].map(([over, word], i) => [over, word, `203.0.113.${100 + i}`] as const))("rejects invalid registration %j", async (over, word, ip) => {
     // Each case from its own address: failed registrations count towards the rate limit too.
     const res = await call("/v1/games", { method: "POST", json: game(over as Record<string, unknown>), ip });

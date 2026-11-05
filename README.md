@@ -23,7 +23,7 @@ All bodies are JSON. Errors are `{"error": "message"}` with a 4xx status.
 | Call | |
 |---|---|
 | `GET /` | `{service, api}` |
-| `GET /v1/games?type=duel\|skirmish` | `{games: [...], heartbeat_s, ttl_s}`: open public games, newest first (private and started games are left out) |
+| `GET /v1/games?type=duel\|skirmish` | `{api, games: [...], heartbeat_s, ttl_s}`: open public games, newest first (private and started games are left out) |
 | `GET /v1/games/:id` | One game, including private ones: the id works as an invite code |
 | `POST /v1/games` | Register a game (below). `201 {id, token, ip, port, reachable, heartbeat_s, ttl_s}` |
 | `POST /v1/games/:id/heartbeat` | `Authorization: Bearer <token>`. Optional body `{players, started}`. Send every `heartbeat_s` (15) seconds; a game without one for `ttl_s` (60) seconds is removed |
@@ -44,13 +44,16 @@ Registration body:
 | `private` | Optional boolean: not listed, joinable by id |
 | `game_version`, `engine_version` | Strings, up to 32 characters; clients hide games they can't join |
 | `mods` | Optional `[{name, version}]`, up to 64 |
-| `settings` | Optional flat object of strings/numbers/booleans (turn type, timers, ...), up to 32 keys |
+| `edition` | Optional `"base"` or `"modded"` (default: `"modded"` when `content` is non-empty) |
+| `content` | Optional `[{name, version, files}]`, up to 128: the community content packs in the host's `CookedPC` folder; `version` is a content hash (up to 16 characters), so clients can name each pack that differs |
+| `content_fingerprint` | Optional hash over all of `content` (up to 32 characters) |
+| `settings` | Optional flat object of strings (up to 2048 characters)/numbers/booleans (turn type, random map string, ...), up to 32 keys |
 | `ipv4` | Optional; only used when the host's request reached Cloudflare over IPv6 (the game listens on IPv4). The host's mod gets it from the router through UPnP |
 
-The host's address is the IP its request came from, as Cloudflare saw it; hosts can't register someone else's
-address. On registration the lobby tries a TCP connection to `ip:port`. `reachable: true` means other players can
-connect, `false` means the port is closed (router or firewall). `reachable` only checks TCP. The game's traffic
-is UDP on the same port, so UDP has to be open as well.
+The host's address is the IP its request came from, as Cloudflare saw it (private addresses are refused); hosts
+can't register someone else's address. `reachable` is `null`: the host's game listens on UDP 27015 only, which a
+Worker can't test (the TCP probe in `src/lobby.ts` stays available behind `PROBE = "on"`). Hosts open the port
+with UPnP or by hand.
 
 Limits: 10 registrations per minute and 3 games per address (a 4th replaces the address's oldest game, so a
 crashed host can come back), 16 KB per request.

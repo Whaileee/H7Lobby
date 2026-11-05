@@ -5,7 +5,7 @@
 // cached in memory. Expired games are pruned lazily on every request.
 import { DurableObject } from "cloudflare:workers";
 import { connect } from "cloudflare:sockets";
-import type { Env } from "./index";
+import { API_VERSION, type Env } from "./index";
 import { InvalidInput, isIPv4, isPrivateIPv4, parseHeartbeat, parseRegistration, type Registration } from "./validate";
 
 export const HEARTBEAT_S = 15;
@@ -161,7 +161,7 @@ export class Lobby extends DurableObject<Env> {
       .filter((g) => !g.private && !g.started && (!type || g.type === type))
       .sort((a, b) => b.created - a.created)
       .map(publicView);
-    return json({ games, heartbeat_s: HEARTBEAT_S, ttl_s: TTL_S });
+    return json({ api: API_VERSION, games, heartbeat_s: HEARTBEAT_S, ttl_s: TTL_S });
   }
 
   private async register(request: Request, ip: string, now: number): Promise<Response> {
@@ -179,7 +179,7 @@ export class Lobby extends DurableObject<Env> {
       if (!reg.ipv4) return error("your request came over IPv6; send your public IPv4 address in ipv4", 400);
       hostIp = reg.ipv4;
     }
-    if (this.env.PROBE !== "off" && isPrivateIPv4(hostIp)) return error(`${hostIp} is not a public address`, 400);
+    if (isPrivateIPv4(hostIp)) return error(`${hostIp} is not a public address`, 400);
 
     const mine = [...this.games.values()].filter((g) => g.ip === hostIp);
     if (mine.length >= MAX_GAMES_PER_IP) {
