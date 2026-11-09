@@ -32,6 +32,10 @@ All bodies are JSON. Errors are `{"error": "message"}` with a 4xx status.
 | `GET /v1/admin/bans` | Admin token. `{bans: [{cidr, reason, until?, created, active}]}` |
 | `PUT /v1/admin/bans` | Admin token. `{cidr, reason?, until?, force?}`: ban an address or range (IPv4 or IPv6, e.g. `198.51.100.0/24`); its games are removed at once. Ranges wider than /16 (IPv4) or /32 (IPv6) need `"force": true`. `until` is ms since the epoch |
 | `DELETE /v1/admin/bans?cidr=` | Admin token. Lift a ban. `204` |
+| `POST /v1/reports` | A [desync report](#desync-reports) from a player who opted in. `201 {id}`; `413` over 144 KB; `429` at a limit; `503` when the day's reports are full |
+| `GET /v1/admin/reports?game=&session=&since=&limit=` | Admin token. `{reports: [...]}`, newest first, without the logs (`limit` default 100, at most 500; `since` in ms since the epoch) |
+| `GET /v1/admin/reports/:id` | Admin token. One report with its `log` |
+| `DELETE /v1/admin/reports/:id` | Admin token. `204` |
 
 Registration body:
 
@@ -79,6 +83,29 @@ twice) gives ckey `00f01b98…edc3cc`; nonce `0123456789abcdef0123456789abcdef` 
 `node test/responder.mjs` is a reference host side. Hosts therefore need **UDP and TCP** on their game port
 forwarded (H7ModEngine maps both through UPnP).
 
+### Desync reports
+
+Players can opt in (OnlineLobby setting "Send desync reports", off by default) to send the tail of their game's
+multiplayer trace when the game goes out of sync, so desyncs can be diagnosed. The lobby keeps reports for 30 days
+in their own Durable Object (`src/reports.ts`) and stores **no IP address** with them (the caller's address only
+feeds the per-minute limit, in memory). Report body:
+
+| Field | |
+|---|---|
+| `session` | 32 lowercase hex characters: one game session on one PC |
+| `game` | Optional lobby game id (both players of a lobby game send the same one); empty for a LAN game |
+| `role` | `"host"` or `"client"` |
+| `player` | Optional, -1..7 (the player's slot) |
+| `trigger` | What made the client send it: comma-separated tags such as `OOS`, `OOSREMOTE`, `LATE`, `STUCK` |
+| `uac` | Optional integer: the game's action counter at the trigger |
+| `map`, `simturns` | Optional: map name (up to 128 characters), simultaneous turns |
+| `game_version`, `engine_version` | Strings, up to 32 characters |
+| `mods`, `edition`, `content_fingerprint` | Optional, as in a registration |
+| `log` | The trace: text lines (tabs and line breaks allowed), up to 128 KB. Format: H7ModEngine `dist/lib/mpsync.lua` |
+
+Limits: 3 reports a minute per caller (5 at the edge), 5 per session, 300 a day in all, 2000 stored (the oldest
+go first). `tools/fetch_reports.py` in H7ModEngine downloads them and runs the trace diff on each game's pair.
+
 ### Limits
 
 Per caller (IPv6: per /48) 10 registrations a minute, failed ones included (also enforced at the edge by a
@@ -94,6 +121,7 @@ Secrets). Without it the admin routes answer 404. Example:
 ```bash
 curl -X PUT https://h7-lobby.whaileee.workers.dev/v1/admin/bans -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" -d '{"cidr": "198.51.100.0/24", "reason": "fake games"}'
+curl https://h7-lobby.whaileee.workers.dev/v1/admin/reports -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ## Deploying your own

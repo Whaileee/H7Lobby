@@ -79,6 +79,19 @@ function listOf(v: unknown, field: string): unknown[] {
   return fail(`${field} must be an array`);
 }
 
+function parseMods(v: unknown): ModInfo[] {
+  const mods: ModInfo[] = [];
+  if (v === undefined) return mods;
+  const list = listOf(v, "mods");
+  if (list.length > 64) fail("at most 64 mods");
+  for (const m of list) {
+    if (typeof m !== "object" || m === null) fail("mods entries must be objects");
+    const mm = m as Record<string, unknown>;
+    mods.push({ name: str(mm.name, "mods[].name", 64), version: str(mm.version, "mods[].version", 32, false) });
+  }
+  return mods;
+}
+
 export function parseRegistration(body: unknown): Registration {
   if (typeof body !== "object" || body === null || Array.isArray(body)) fail("body must be a JSON object");
   const b = body as Record<string, unknown>;
@@ -87,16 +100,7 @@ export function parseRegistration(body: unknown): Registration {
   const slots = int(b.slots, "slots", 2, 8);
   const players = int(b.players, "players", 1, slots, 1);
 
-  const mods: ModInfo[] = [];
-  if (b.mods !== undefined) {
-    const list = listOf(b.mods, "mods");
-    if (list.length > 64) fail("at most 64 mods");
-    for (const m of list) {
-      if (typeof m !== "object" || m === null) fail("mods entries must be objects");
-      const mm = m as Record<string, unknown>;
-      mods.push({ name: str(mm.name, "mods[].name", 64), version: str(mm.version, "mods[].version", 32, false) });
-    }
-  }
+  const mods = parseMods(b.mods);
 
   const content: ContentPack[] = [];
   if (b.content !== undefined) {
@@ -169,4 +173,64 @@ export function parseHeartbeat(body: unknown): Heartbeat {
     hb.started = b.started as boolean;
   }
   return hb;
+}
+
+// A desync report (POST /v1/reports): the tail of a player's multiplayer trace, sent by H7ModEngine's OnlineLobby
+// when the player opted in. Format of `log`: H7ModEngine lib/mpsync.lua.
+export const MAX_REPORT_LOG = 128 * 1024; // characters of log text
+
+export interface Report {
+  session: string;  // 32 hex: one game session on one PC; both players' reports share `game`, not `session`
+  game: string;     // lobby game id, or "" for a LAN game
+  role: string;     // "host" / "client"
+  player: number;   // the player's slot, -1 unknown
+  trigger: string;  // what made the client send it, e.g. "OOS" or "LATE,OOS"
+  uac: number;      // the game's action counter at the trigger
+  map: string;
+  simturns: boolean;
+  game_version: string;
+  engine_version: string;
+  mods: ModInfo[];
+  edition: Edition | "";
+  content_fingerprint: string;
+  log: string;
+}
+
+export function parseReport(body: unknown): Report {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) fail("body must be a JSON object");
+  const b = body as Record<string, unknown>;
+  const session = str(b.session, "session", 32);
+  if (!/^[0-9a-f]{32}$/.test(session)) fail("session must be 32 lowercase hex characters");
+  const game = str(b.game, "game", 16, false).toUpperCase();
+  if (game && !/^[0-9A-Z]+$/.test(game)) fail("game must be a lobby game id");
+  const role = str(b.role, "role", 16);
+  if (!/^[a-z0-9]+$/.test(role)) fail("role must be lowercase letters and digits");
+  const trigger = str(b.trigger, "trigger", 64);
+  if (!/^[A-Z?]+(,[A-Z?]+)*$/.test(trigger)) fail("trigger must be comma-separated tags like OOS,LATE");
+  const edition = str(b.edition, "edition", 16, false);
+  if (edition && edition !== "base" && edition !== "modded") fail('edition must be "base" or "modded"');
+  if (b.simturns !== undefined && typeof b.simturns !== "boolean") fail("simturns must be a boolean");
+  if (typeof b.log !== "string") fail("log must be a string");
+  const log = b.log as string;
+  if (!log.trim()) fail("log must not be empty");
+  if (log.length > MAX_REPORT_LOG) fail(`log is longer than ${MAX_REPORT_LOG} characters`);
+  // Text lines only: tabs and line breaks are fine, other control characters are not.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(log)) fail("log contains control characters");
+  return {
+    session,
+    game,
+    role,
+    player: int(b.player, "player", -1, 7, -1),
+    trigger,
+    uac: int(b.uac, "uac", -1, 2_000_000_000, -1),
+    map: str(b.map, "map", 128, false),
+    simturns: b.simturns === true,
+    game_version: str(b.game_version, "game_version", 32),
+    engine_version: str(b.engine_version, "engine_version", 32),
+    mods: parseMods(b.mods),
+    edition: edition as Edition | "",
+    content_fingerprint: str(b.content_fingerprint, "content_fingerprint", 32, false),
+    log,
+  };
 }

@@ -20,3 +20,6 @@ The game client is the online support in H7ModEngine (`N:\Projects\H7ModEngine`,
 - The entry module (`src/index.ts`) may export only handlers and classes (constants live in `src/constants.ts`):
   workerd refuses to start otherwise, and vitest doesn't notice (`test/verify.test.ts` guards it).
 - `ADMIN_TOKEN` is a secret set in Cloudflare, never in the repo; admin routes 404 without it.
+- Desync reports (`src/reports.ts`, its own SQLite Durable Object `Reports`, migration `v2`): opt-in, store no IP
+  address (the caller's only feeds an in-memory per-minute limit). The entry Worker reads and caps the body before
+  forwarding it. The report format is the client's (H7ModEngine `dist/lib/mpsync.lua`); change both together.

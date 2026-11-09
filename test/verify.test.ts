@@ -63,6 +63,6 @@ describe("ipaddr", () => {
 describe("entry module", () => {
   it("exports only handlers and classes (workerd refuses to start otherwise)", async () => {
     const mod = await import("../src/index");
-    expect(Object.keys(mod).sort()).toEqual(["Lobby", "default"]);
+    expect(Object.keys(mod).sort()).toEqual(["Lobby", "Reports", "default"]);
   });
 });
