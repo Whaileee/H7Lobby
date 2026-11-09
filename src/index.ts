@@ -1,28 +1,49 @@
-// Entry Worker: answers /, registers games (with host verification) and forwards the other /v1/* routes to the
-// single Lobby Durable Object, passing the caller's IP.
+// Entry Worker: answers /, registers games (with host verification), takes desync reports and forwards the other
+// /v1/* routes to the single Lobby Durable Object (reports: the single Reports object), passing the caller's IP.
 //
 // Registration is handled here rather than in the Durable Object because verifying a host means waiting up to a few
 // seconds on a TCP socket: a Durable Object is billed for wall-clock time while it waits, a Worker for CPU only.
 import { Lobby } from "./lobby";
+import { MAX_REPORT_BODY, Reports } from "./reports";
 import { API_VERSION, MAX_BODY } from "./constants";
 import { isIPv4, isPrivateIPv4, rateKey } from "./ipaddr";
 import { InvalidInput, parseRegistration } from "./validate";
 import { deriveChallengeKey, verifyHost } from "./verify";
 
-export { Lobby };
+export { Lobby, Reports };
 
 export interface Env {
   LOBBY: DurableObjectNamespace<Lobby>;
+  REPORTS: DurableObjectNamespace<Reports>;
   VERIFY: string;             // "on": hosts must pass the TCP challenge (src/verify.ts); "off" (tests): trusted
   DEV_ALLOW_PRIVATE?: string; // "1": accept private host addresses (local `wrangler dev` only)
   ADMIN_TOKEN?: string;       // secret (`wrangler secret put ADMIN_TOKEN`); admin routes answer 404 without it
   REGISTER_LIMIT?: RateLimit; // edge rate limit on registrations, before the Durable Object sees them
+  REPORT_LIMIT?: RateLimit;   // edge rate limit on desync reports
 }
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const error = (message: string, status: number) => json({ error: message }, status);
 
 const lobby = (env: Env) => env.LOBBY.get(env.LOBBY.idFromName("global"));
+const reports = (env: Env) => env.REPORTS.get(env.REPORTS.idFromName("global"));
+
+async function report(request: Request, env: Env, clientIp: string): Promise<Response> {
+  if (env.REPORT_LIMIT) {
+    const { success } = await env.REPORT_LIMIT.limit({ key: rateKey(clientIp) });
+    if (!success) return error("too many reports, try again in a minute", 429);
+  }
+  // Read (and cap) the body here: a Durable Object is billed for wall-clock time while a large upload trickles in.
+  const declared = Number(request.headers.get("Content-Length") ?? "0");
+  if (declared > MAX_REPORT_BODY) return error("body too large", 413);
+  const text = await request.text();
+  if (text.length > MAX_REPORT_BODY) return error("body too large", 413);
+  return reports(env).fetch("https://reports/internal/report", {
+    method: "POST",
+    headers: { "X-Client-IP": clientIp, "Content-Type": "application/json" },
+    body: text,
+  });
+}
 
 async function register(request: Request, env: Env, clientIp: string): Promise<Response> {
   if (env.REGISTER_LIMIT) {
@@ -90,7 +111,12 @@ export default {
 
     // Never trust a client-supplied X-Client-IP: replace it with what Cloudflare saw.
     const clientIp = request.headers.get("CF-Connecting-IP") ?? "127.0.0.1";
-    if (request.method === "POST" && url.pathname.replace(/\/+$/, "") === "/v1/games") return register(request, env, clientIp);
+    const path = url.pathname.replace(/\/+$/, "");
+    if (request.method === "POST" && path === "/v1/games") return register(request, env, clientIp);
+    if (request.method === "POST" && path === "/v1/reports") return report(request, env, clientIp);
+    if (path === "/v1/admin/reports" || path.startsWith("/v1/admin/reports/")) {
+      return reports(env).fetch(new Request(request)); // admin token checked there; no client IP needed
+    }
 
     const headers = new Headers(request.headers);
     headers.set("X-Client-IP", clientIp);

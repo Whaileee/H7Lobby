@@ -6,10 +6,17 @@
   "observability": { "enabled": true },
   // One Durable Object instance holds the whole game list (small: a few hundred games at most).
   "durable_objects": {
-    "bindings": [{ "name": "LOBBY", "class_name": "Lobby" }]
+    "bindings": [
+      { "name": "LOBBY", "class_name": "Lobby" },
+      // Opt-in desync reports from players (src/reports.ts); kept apart so report bodies never slow the game list.
+      { "name": "REPORTS", "class_name": "Reports" }
+    ]
   },
   // SQLite-backed Durable Objects are the kind available on the Workers free plan.
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Lobby"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Lobby"] },
+    { "tag": "v2", "new_sqlite_classes": ["Reports"] }
+  ],
   "vars": {
     // "on": a host is listed only after it answers the lobby's TCP challenge on its game port (src/verify.ts).
     // Tests run with "off". Local `wrangler dev` testing against 127.0.0.1: add `--var DEV_ALLOW_PRIVATE:1`.
@@ -17,5 +24,9 @@
   },
   // Edge rate limit on POST /v1/games per caller (IPv6: per /48), before the Durable Object sees the request.
   // The Durable Object keeps its own, exact limits too (src/lobby.ts).
-  "ratelimits": [{ "name": "REGISTER_LIMIT", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }]
+  // Same for POST /v1/reports (opt-in desync reports; a game sends at most 3).
+  "ratelimits": [
+    { "name": "REGISTER_LIMIT", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
+    { "name": "REPORT_LIMIT", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } }
+  ]
 }
